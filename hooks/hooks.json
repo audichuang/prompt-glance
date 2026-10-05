@@ -1,0 +1,6 @@
+{
+  "description": "prompt-glance: turn.step reads each request's cache usage, tool.call counts tools and skills, a one-second clock.every drives the countdown and the model; ui.render draws the AbovePrompt HUD and the /cache pane",
+  "modules": [
+    "./glance.tsx"
+  ]
+}
