@@ -163,3 +163,35 @@ export function topTools(tally: ToolTally, n: number): [string, number, number][
     .sort((a, b) => b[1] + b[2] - (a[1] + a[2]))
     .slice(0, n)
 }
+
+/** Dollars: cents under $100, whole dollars from there, "<$0.01" for a crumb. */
+export function fmtUsd(usd: number): string {
+  if (usd > 0 && usd < 0.01) return '<$0.01'
+  return usd >= 100 ? `$${Math.round(usd)}` : `$${usd.toFixed(2)}`
+}
+
+/** A turn's share of the 5-hour window: quiet under 1%, yellow to 3%, red past it. */
+export function deltaColor(pct: number): string {
+  return pct > 3 ? 'red' : pct > 1 ? 'yellow' : 'gray'
+}
+
+/**
+ * What a turn spent, from the figures at its start to now: dollars and the
+ * plan windows' growth. A window that reset during the turn counts from zero.
+ * Undefined before any turn has started.
+ */
+export function turnSpend(
+  base: { usd?: number; five?: number; week?: number } | undefined,
+  usd: number | undefined,
+  five: number | undefined,
+  week: number | undefined,
+): { usd?: number; five?: number; week?: number } | undefined {
+  if (!base) return undefined
+  const grow = (from: number | undefined, to: number | undefined) =>
+    to === undefined ? undefined : from === undefined || to < from ? to : to - from
+  return {
+    usd: usd === undefined ? undefined : Math.max(0, usd - (base.usd ?? 0)),
+    five: base.five === undefined && five === undefined ? undefined : grow(base.five, five),
+    week: base.week === undefined && week === undefined ? undefined : grow(base.week, week),
+  }
+}

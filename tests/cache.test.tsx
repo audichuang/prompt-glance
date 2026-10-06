@@ -21,7 +21,7 @@ import {
   fitBand,
 } from '../hooks/cache.ts'
 import type { Policy, Sample } from '../hooks/cache.ts'
-import { fmtPct, fmtShort, gauge, heat, modelColor, heatGauge, HEAT, parseGitStatus, prettyModel, SCALE, shortPath, topTools, TRACK } from '../hooks/hud.ts'
+import { deltaColor, fmtPct, fmtShort, fmtUsd, gauge, heat, modelColor, turnSpend, heatGauge, HEAT, parseGitStatus, prettyModel, SCALE, shortPath, topTools, TRACK } from '../hooks/hud.ts'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
@@ -151,8 +151,9 @@ describe('per-turn rows', () => {
 // The module end to end: a main-loop request feeds the band, a subagent's does not.
 type Calls = { status: (string | undefined)[]; logs: string[] }
 
-function fakeEngine(on: On, env: Record<string, string>, calls: Calls, cache = { read: 80_000, write: 1_000 }, limits: { kind: string; percentUsed: number; resetsAt?: string }[] = []) {
-  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: limits } }) as never)
+function fakeEngine(on: On, env: Record<string, string>, calls: Calls, cache = { read: 80_000, write: 1_000 }, limits: { kind: string; percentUsed: number; resetsAt?: string }[] = [], money?: { usd: number }) {
+  on('session.usage', () => ({ value: { startedAt: 0, context: {}, rateLimits: limits, ...(money ? { cost: { usd: money.usd } } : {}) } }) as never)
+  on('turn.start', async ($, e) => ({ turnId: e.turnId }) as never)
   on('session.start', async ($, e) => ({ cwd: e.cwd }) as never)
   on('session.end', async () => ({ sessionId: 's1' }) as never)
   on('env.get', ($, e) => ({ value: env[e.name] }))
@@ -262,6 +263,24 @@ describe('the band', () => {
     expect(await narrow.find({ type: 'Text', text: /^Bash$/ })).toBeUndefined()
     expect(await narrow.find({ type: 'Text', text: /^Cache/ })).toBeDefined()
     await narrow.unmount()
+  })
+
+  test('the turn shows what it spent, the session its total', async ($, on) => {
+    const calls: Calls = { status: [], logs: [] }
+    const money = { usd: 1.2 }
+    const limits = [{ kind: 'five_hour', percentUsed: 10 }]
+    fakeEngine(on, {}, calls, undefined, limits, money)
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true } as never)
+    await $.turn.start({ text: 'hi', turnId: 't1' } as never)
+    money.usd = 1.62
+    limits[0].percentUsed = 10.8
+    await step($)
+    const ui = await $.ui.mount({ plugin: 'prompt-glance', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, bodyColumns: 160 } as never })
+    expect(await ui.find({ type: 'Text', text: /^Turn $/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^\$0\.42$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^ \+0\.8%$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^\$1\.62$/ })).toBeDefined()
+    await ui.unmount()
   })
 
   test('a plan window always shows its percentage, its reset only past half', async ($, on) => {
@@ -390,6 +409,18 @@ describe('hud helpers', () => {
     expect(shortPath('/Users/a/Project/mod', '/Users/a')).toBe('~/Project/mod')
     expect(shortPath('/Users/a/Project/mod/x', '/Users/a', 2)).toBe('mod/x')
     expect(shortPath('/opt/x', '/Users/a', 1)).toBe('x')
+  })
+  test('a turn spends dollars and a share of the 5-hour window', () => {
+    expect(turnSpend(undefined, 1, 10, 3)).toBeUndefined()
+    expect(turnSpend({ usd: 1.2, five: 10, week: 3 }, 1.62, 10.8, 3.1)).toEqual({ usd: 1.62 - 1.2, five: 10.8 - 10, week: 3.1 - 3 })
+    // the window reset mid-turn: count from zero
+    expect(turnSpend({ usd: 0, five: 98 }, 0.1, 0.5, undefined)?.five).toBe(0.5)
+    expect(fmtUsd(0.004)).toBe('<$0.01')
+    expect(fmtUsd(0.42)).toBe('$0.42')
+    expect(fmtUsd(123.4)).toBe('$123')
+    expect(deltaColor(0.5)).toBe('gray')
+    expect(deltaColor(2)).toBe('yellow')
+    expect(deltaColor(4)).toBe('red')
   })
   test('tools are ranked by use, MCP names shortened', () => {
     const t = new Map([['Bash', { ok: 18, failed: 1 }], ['mcp__codegraph__codegraph_explore', { ok: 2, failed: 0 }], ['Edit', { ok: 5, failed: 0 }]])

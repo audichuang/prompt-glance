@@ -57,7 +57,7 @@ import {
   segments,
 } from './cache.ts'
 import type { Account, Advice, BandPart, BandSeg, CacheEnv, Sample, Ttl } from './cache.ts'
-import { fmtPct, fmtShort, heat, heatGauge, lineGauge, modelColor, parseGitStatus, prettyModel, SCALE, shortAdvice, shortPath, topTools } from './hud.ts'
+import { deltaColor, fmtPct, fmtShort, fmtUsd, heat, turnSpend, heatGauge, lineGauge, modelColor, parseGitStatus, prettyModel, SCALE, shortAdvice, shortPath, topTools } from './hud.ts'
 import type { ToolTally } from './hud.ts'
 
 const PANE = 'cache'
@@ -89,6 +89,9 @@ let cwd = ''
 let home: string | undefined
 let git: { branch: string; dirty: boolean; ahead: number; behind: number } | undefined
 let ctxPct: number | undefined
+// what the session has cost so far, and the figures at the start of the current turn, so the turn's share shows
+let costUsd: number | undefined
+let turnBase: { usd?: number; five?: number; week?: number } | undefined
 let five: Window | undefined
 let week: Window | undefined
 let tally: ToolTally = new Map()
@@ -104,6 +107,7 @@ async function refreshInfo($: EngineInterface, withBranch = false) {
   const u = await $.session.usage().catch(() => undefined)
   if (u) {
     ctxPct = u.context.percent
+    costUsd = u.cost?.usd
     const win = (kind: string): Window | undefined => {
       const r = u.rateLimits.find(l => l.kind === kind)
       return r ? { pct: r.percentUsed, resetsAt: r.resetsAt ? Date.parse(r.resetsAt) : undefined } : undefined
@@ -287,6 +291,15 @@ export const register: Register = (on, options) => {
   })
 
   // each main-loop request: what the cache did with it
+  // a new turn: remember where cost and the plan windows stand, so the HUD can show what this turn spends
+  on('turn.start', async ($, e, next) => {
+    const r = await next(e)
+    await refreshInfo($)
+    turnBase = { usd: costUsd, five: five?.pct, week: week?.pct }
+    $.ui.invalidate('ui.render')
+    return r
+  })
+
   on('turn.step', async function* ($, e, next) {
     if (e.agentId) return yield* next(e)
     const startedAt = Date.now()
@@ -466,10 +479,24 @@ export const register: Register = (on, options) => {
       return out
     }
 
+    // what the current (or last) turn spent: dollars, and its share of the 5-hour window; the session's total beside it
+    const spent = turnSpend(turnBase, costUsd, five?.pct, week?.pct)
+    const spend = (withSession: boolean, pad = 0): BandPart[] => {
+      if (!spent) return []
+      const segs: BandSeg[] = [label('Turn', pad)]
+      if (spent.usd !== undefined) segs.push({ text: fmtUsd(spent.usd), color: '#c0caf5', bold: true })
+      if (spent.five !== undefined) segs.push({ text: `${segs.length > 1 ? ' ' : ''}+${spent.five.toFixed(1)}%`, color: deltaColor(spent.five) })
+      if (segs.length === 1) return []
+      if (withSession && costUsd !== undefined) segs.push({ text: '  ' }, label('Session'), { text: fmtUsd(costUsd), color: 'gray' })
+      return [part('spend', segs)]
+    }
+
     // wide: two rows, a left and a right group each, when nothing has to go
     const wideTop: [BandPart[], BandPart[]][] = [
-      [[who, where(), ...branch], cache(12)],
-      [[who, where(3), ...branch], cache(12)],
+      [[who, where(), ...branch], [...spend(true), ...cache(12)]],
+      [[who, where(3), ...branch], [...spend(true), ...cache(12)]],
+      [[who, where(1), ...branch], [...spend(false), ...cache(12)]],
+      [[who, where(1), ...branch], [...spend(false), ...cache(10)]],
       [[who, where(1), ...branch], cache(10)],
     ]
     // the activity rides at the right of the gauges when it fits there whole, else takes rows of its own
@@ -495,6 +522,8 @@ export const register: Register = (on, options) => {
       const pad = LABEL_PAD
       const cacheRow = [cache(12, true, pad), cache(10, true, pad), cache(8, true, pad), cache(6, false, pad)].find(c => fitsRow([c, []], columns)) ?? cache(0, false, pad)
       rows.push([cacheRow, []])
+      const spendRow = [spend(true, pad), spend(false, pad)].find(p => p.length && fitsRow([p, []], columns))
+      if (spendRow) rows.push([spendRow, []])
       const width = [12, 10, 8].find(w => fitsRow([meter('ctx', 'Context', 100, w, SCALE.context, undefined, pad), []], columns)) ?? 6
       let line: BandPart[] = []
       for (const g of [

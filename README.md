@@ -3,7 +3,7 @@
 A two-row HUD for Claude Code, drawn right above the prompt. One glance tells you which model you are on, where you are, how full the context and your plan windows are, whether the prompt cache is still warm, and what Claude has been doing.
 
 ```
-Opus 5.5  ~/Project/app  git:(main*) ↑1                              Cache 99.6%  ████████████ 58m
+Opus 5.5  ~/Project/app  git:(main*) ↑1      Turn $0.42 +0.8%  Session $3.10   Cache 99.6%  ████████████ 58m
 Context ███▌████████ 22%   5h █▎██████████ 10%   Week ▌███████████ 4%      Tools Bash×20  Edit×3  Skills tdd
 ```
 
@@ -11,11 +11,12 @@ It is a Claude Code **mod** (a plugin of function hooks), not a status line comm
 
 ## What you see
 
-**Row one: who and where, then the cache**
+**Row one: who and where, then what it costs and the cache**
 
 - **Model**, coloured by family (Opus amber, Sonnet blue, Haiku green, Fable lavender).
 - **Path**, with `~` for home, shortened from the left when the row is tight.
 - **Git**, as `git:(branch)`: a yellow `*` when the tree is dirty, `↑n` / `↓n` against upstream.
+- **Turn** and **Session**: what the current turn has spent so far (from the prompt you sent to the end of the answer, every request and tool call in between) and its share of the 5-hour window (`+0.8%`: grey under 1%, yellow to 3%, red past it), then the session's total. The figures stay after the turn ends until you send the next prompt.
 - **Cache**: the last request's hit rate (99.5% never rounds up to 100%) and a bar that drains as the cache's lifetime runs out, with the time left. Words appear only when there is something to do: `expiring · send a message`, `expired · /compact first`, `missed`.
 
 **Row two: how much is used, then the activity**
@@ -35,9 +36,18 @@ It is a Claude Code **mod** (a plugin of function hooks), not a status line comm
 ```
 Opus 5.5  ~/Project/app
 Cache    99.6%  ████████████ 58m
+Turn     $0.42 +0.8%  Session $3.10
 Context  ███▌████████ 22%
 5h       █▎██████████ 10%    Week  ▌███████████ 4%
 ```
+
+### What the dollars count
+
+The dollars are Claude Code's own ledger, the figure `/cost` shows: every request priced by its four token counts, uncached input at the base rate, cache reads at about 0.1x, cache writes at 1.25x (5-minute) or 2x (1-hour), and output. So a well-kept cache shows up as a cheap turn, and a lapsed one on a large context as an expensive one. Two things to keep in mind:
+
+- On a Claude subscription the dollars are what the same work would cost at API prices, not a bill; the window share (`+0.8%`) is what actually counts against you.
+- The dollars include subagents (the ledger is the session's); the cache meter does not (subagents have prefixes of their own). A turn that fans out to subagents can cost more while the cache figure stays high.
+- The plan windows report one decimal after each response, so a short turn can read `+0.0%`.
 
 `/cache` opens a pane with a per-turn table of cache reads, writes and uncached tokens.
 
@@ -79,6 +89,7 @@ Other switches read from the environment at session start:
 
 ## What it hooks
 
+- `turn.start`: notes the session's cost and the plan windows, so the turn's share can show
 - `turn.step`: each main-loop request's cache usage (subagents have their own prefixes and are left out)
 - `tool.call`: counts tools and skills, and whether a call failed
 - `$.clock.every(1000)`: the countdown and the model; context and plan windows are re-read every 5 seconds, git status every 30
